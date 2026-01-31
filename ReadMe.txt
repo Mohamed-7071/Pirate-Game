@@ -1,40 +1,26 @@
-========================================================================
-    CONSOLE APPLICATION : OpenGL3DTemplate Project Overview
-========================================================================
+# Pirate's Run - 3D OpenGL Adventure
 
-AppWizard has created this OpenGL3DTemplate application for you.
+A 3D action-adventure game developed using C++ and OpenGL. Navigate a pirate through a coastal village to find a hidden map and coins, then brave the Spike Dungeon to claim the ultimate treasure.
 
-This file contains a summary of what you will find in each of the files that
-make up your OpenGL3DTemplate application.
+## 🎮 Gameplay Features
+* **Dual Levels:** A sunny open-world village and a dark, hazardous dungeon.
+* **Camera Modes:** Toggle between Third-Person, First-Person (`V`), and Top-Down (`T`).
+* **Dynamic Environment:** Features a full Day/Night cycle with a moving sun and flickering torchlight in the dungeon.
+* **Physics & Mechanics:** Momentum-based movement, double jumping, and complex collision detection.
 
+## ⌨️ Controls
+| Key | Action |
+| :--- | :--- |
+| **W, A, S, D** | Move |
+| **Space** | Jump / Double Jump |
+| **E** | Interact (NPCs, Boat) |
+| **V / Left Click** | Toggle Camera View |
+| **Right Click + Drag** | Look Around |
 
-OpenGL3DTemplate.vcxproj
-    This is the main project file for VC++ projects generated using an Application Wizard.
-    It contains information about the version of Visual C++ that generated the file, and
-    information about the platforms, configurations, and project features selected with the
-    Application Wizard.
+## 🛠 Setup & Requirements
+1. Ensure you have **Visual Studio** with C++ desktop development.
+2. The project requires the **GLUT** library (`glut.h`, `glut32.lib`).
+3. Keep the `models/`, `textures/`, and `SFX/` folders in the root directory.
 
-OpenGL3DTemplate.vcxproj.filters
-    This is the filters file for VC++ projects generated using an Application Wizard. 
-    It contains information about the association between the files in your project 
-    and the filters. This association is used in the IDE to show grouping of files with
-    similar extensions under a specific node (for e.g. ".cpp" files are associated with the
-    "Source Files" filter).
-
-OpenGL3DTemplate.cpp
-    This is the main application source file.
-
-/////////////////////////////////////////////////////////////////////////////
-Other standard files:
-
-StdAfx.h, StdAfx.cpp
-    These files are used to build a precompiled header (PCH) file
-    named OpenGL3DTemplate.pch and a precompiled types file named StdAfx.obj.
-
-/////////////////////////////////////////////////////////////////////////////
-Other notes:
-
-AppWizard uses "TODO:" comments to indicate parts of the source code you
-should add to or customize.
-
-/////////////////////////////////////////////////////////////////////////////
+---
+*Created as a Graphics Project - 2026*
