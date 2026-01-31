@@ -1,0 +1,771 @@
+﻿#include <vector>
+#include <ctime>
+#include "TextureBuilder.h"
+#include "Model_3DS.h"
+#include "GLTexture.h"
+#include <glut.h>
+#include <math.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <Windows.h>
+#include <mmsystem.h>
+#include <string>
+#pragma comment(lib, "winmm.lib")
+
+#define WIDTH 1280
+#define HEIGHT 720
+#define PI 3.1415926535f
+
+// ===== GAME STATE ENUMERATION =====
+enum GameState { MENU, LEVEL_1, WIN, LOSE, LEVEL_2 };
+GameState gameState = MENU; // Start in Menu
+
+// ---------------- SOUND CONFIGURATION (From Level 1) ----------------
+static const wchar_t* ALIAS_BGM = L"bgm";
+static const wchar_t* ALIAS_COIN_PICKUP = L"s_coin";
+static const wchar_t* ALIAS_MAP_PICKUP = L"s_ma_pickup";
+static const wchar_t* ALIAS_COLLISION = L"s_collision";
+static const wchar_t* ALIAS_GAMEOVER = L"s_gameover";
+static const wchar_t* ALIAS_NPC_INTERACT = L"s_npc_interact";
+static const wchar_t* ALIAS_BOAT_INTERACT = L"s_boat_interact";
+static const wchar_t* ALIAS_JUMP = L"s_jump";
+
+static const wchar_t* PATH_BGM = L"D:\\Sem 5\\Computer Graphics\\Project\\Project\\SFX\\.mp3";
+static const wchar_t* PATH_COIN_PICKUP = L"D:\\Sem 5\\Computer Graphics\\Project\\Project\\SFX\\Coin-Gem Found.mp3";
+static const wchar_t* PATH_MAP_PICKUP = L"D:\\Sem 5\\Computer Graphics\\Project\\Project\\SFX\\Map Found.mp3";
+static const wchar_t* PATH_NPC_INTERACT = L"D:\\Sem 5\\Computer Graphics\\Project\\Project\\SFX\\Interact With Npc.mp3";
+static const wchar_t* PATH_BOAT_INTERACT = L"D:\\Sem 5\\Computer Graphics\\Project\\Project\\SFX\\Boat-Interact.mp3";
+static const wchar_t* PATH_JUMP = L"D:\\Sem 5\\Computer Graphics\\Project\\Project1\\SFX\\Jump.mp3";
+static const wchar_t* PATH_COLLISION = L"C:\\Users\\moham\\Downloads\\hit-soundvideo-game-type-230510.mp3";
+static const wchar_t* PATH_GAMEOVER = L"C:\\Users\\moham\\Downloads\\game-over-38511.mp3";
+
+static bool showBoatInsufficient = false;
+static bool soundsInitialized = false;
+static bool gameOverSoundPlayed = false;
+static int lastCollisionTime = 0;
+const int COLLISION_SOUND_COOLDOWN = 300;
+
+// ---------------- SOUND HELPER FUNCTIONS (From Level 1) ----------------
+static void MciOpen(const wchar_t* alias, const wchar_t* path) {
+    std::wstring cmd = L"open \""; cmd += path; cmd += L"\" type mpegvideo alias "; cmd += alias;
+    mciSendStringW(cmd.c_str(), nullptr, 0, nullptr);
+}
+static void MciClose(const wchar_t* alias) {
+    std::wstring cmd = L"close "; cmd += alias; mciSendStringW(cmd.c_str(), nullptr, 0, nullptr);
+}
+static void MciStop(const wchar_t* alias) {
+    std::wstring cmd = L"stop "; cmd += alias; mciSendStringW(cmd.c_str(), nullptr, 0, nullptr);
+}
+static void MciPlayLoop(const wchar_t* alias) {
+    std::wstring cmd = L"play "; cmd += alias; cmd += L" repeat"; mciSendStringW(cmd.c_str(), nullptr, 0, nullptr);
+}
+static void MciPlayOnce(const wchar_t* alias) {
+    std::wstring stopCmd = L"stop "; stopCmd += alias;
+    mciSendStringW(stopCmd.c_str(), nullptr, 0, nullptr);
+    std::wstring seekCmd = L"seek "; seekCmd += alias; seekCmd += L" to start";
+    mciSendStringW(seekCmd.c_str(), nullptr, 0, nullptr);
+    std::wstring playCmd = L"play "; playCmd += alias;
+    mciSendStringW(playCmd.c_str(), nullptr, 0, nullptr);
+}
+static void Sound_Init() {
+    if (soundsInitialized) return;
+    MciOpen(ALIAS_BGM, PATH_BGM); MciOpen(ALIAS_COIN_PICKUP, PATH_COIN_PICKUP);
+    MciOpen(ALIAS_MAP_PICKUP, PATH_MAP_PICKUP); MciOpen(ALIAS_COLLISION, PATH_COLLISION);
+    MciOpen(ALIAS_GAMEOVER, PATH_GAMEOVER); MciOpen(ALIAS_NPC_INTERACT, PATH_NPC_INTERACT);
+    MciOpen(ALIAS_BOAT_INTERACT, PATH_BOAT_INTERACT); MciOpen(ALIAS_JUMP, PATH_JUMP);
+    soundsInitialized = true;
+}
+static void Sound_Shutdown() {
+    MciClose(ALIAS_GAMEOVER); MciClose(ALIAS_COLLISION); MciClose(ALIAS_BOAT_INTERACT);
+    MciClose(ALIAS_NPC_INTERACT); MciClose(ALIAS_MAP_PICKUP); MciClose(ALIAS_COIN_PICKUP);
+    MciClose(ALIAS_JUMP); MciClose(ALIAS_BGM);
+}
+
+
+// ---------------- GLOBAL VARIABLES ----------------
+GLuint tex;
+GLTexture skyboxTexture;
+GLTexture groundTexture;
+GLTexture tex_menu_bg;
+GLTexture tex_play_btn;
+
+char title[] = "Pirate's Run - Multi-Level";
+static const float LAND_SIZE = 300.0f;
+static const float WORLD_SIZE = LAND_SIZE + 100.0f;
+static const float GROUND_Y = 0.0f;
+static const float WATER_Y = -2.0f;
+
+// ---------------- LEVEL 1 OBJECTS (Merged from Level 1 Code) ----------------
+struct MapInstance { float x, y, z; float scale; float spinDeg; bool placed; };
+static MapInstance g_mapRoad = { 0.0f, 1.0f, 0.0f, 2.0f, 0.0f, false };
+static bool hasMap = false;
+
+struct NPCInstance { float x, y, z; float yawDeg; float scale; bool placed; };
+static NPCInstance g_npc = { 5.0f, 0.0f, 5.0f, 180.0f, 0.02f, true }; // Level 1 NPC pos
+
+static bool showInteractPrompt = false;
+static bool showNPCDialogue = false;
+static float dialogueTimer = 0.0f;
+static const float DIALOGUE_DURATION = 5.0f;
+static const float NPC_INTERACT_DISTANCE = 3.0f;
+
+struct BoatInstance { float x, y, z; float yawDeg; float scale; bool placed; };
+static BoatInstance g_boat = { 0.0f, GROUND_Y, 0.0f, 0.0f, 1.0f, false };
+
+static bool showBoatPrompt = false;
+static bool showBoatDialogue = false;
+static bool showBoatDialogue2 = false;
+static float boatDialogueTimer = 0.0f;
+static const float BOAT_INTERACT_DISTANCE = 5.0f;
+static bool paidForBoat = false;
+static const int BOAT_COST = 10;
+
+// Level 1 Environment Instances (from Level 1 code)
+struct TreeInstance { float x, y, z; float yawDeg; float scale; };
+static std::vector<TreeInstance> g_trees;
+struct HouseInstance { float x, y, z; float yawDeg; float scale; };
+static std::vector<HouseInstance> g_houses;
+struct RockInstance { float x, y, z; float yawDeg; float scale; int modelIndex; };
+static std::vector<RockInstance> g_rocks;
+struct CoinInstance { float x, y, z; float spinDeg; float scale; bool active; };
+static std::vector<CoinInstance> g_coins;
+
+// Level 1 Platforms
+struct Platform { float x, y, z, size; };
+static constexpr int PLATFORM_COUNT = 9;
+static Platform g_platforms[PLATFORM_COUNT] = {
+    { (WORLD_SIZE * 0.5f) - 8.0f, 2.0f, (WORLD_SIZE * 0.5f) - 6.0f, 2.5f },
+    { (WORLD_SIZE * 0.5f) + 6.0f, 4.0f, (WORLD_SIZE * 0.5f) - 3.0f, 2.5f },
+    { (WORLD_SIZE * 0.5f) - 5.0f, 6.4f, (WORLD_SIZE * 0.5f) + 4.0f, 2.5f },
+    { (WORLD_SIZE * 0.5f) + 8.0f, 8.8f, (WORLD_SIZE * 0.5f) + 2.0f, 2.5f },
+    { (WORLD_SIZE * 0.5f) - 10.0f, 10.2f, (WORLD_SIZE * 0.5f) - 1.0f, 2.5f },
+    { (WORLD_SIZE * 0.5f) + 10.0f, 12.6f, (WORLD_SIZE * 0.5f) - 7.0f, 2.5f },
+    { (WORLD_SIZE * 0.5f) - 7.0f, 14.0f, (WORLD_SIZE * 0.5f) + 8.0f, 2.5f },
+    { (WORLD_SIZE * 0.5f) + 2.0f, 16.4f, (WORLD_SIZE * 0.5f) + 10.0f, 2.5f },
+    { (WORLD_SIZE * 0.5f) - 12.0f, 18.8f, (WORLD_SIZE * 0.5f) + 12.0f, 2.5f },
+};
+
+// ---------------- LEVEL 2 OBJECTS (from Level 2 Code) ----------------
+struct Lvl2Platform { float x, z, width, length, y; };
+static std::vector<Lvl2Platform> lvl2_platforms;
+
+struct Pendulum {
+    float pivotX, pivotY, pivotZ;
+    float length;
+    float currentAngle;
+    float maxAngle;
+    float speed;
+    bool axisZ;
+};
+static std::vector<Pendulum> lvl2_pendulums;
+
+// Level 1 & 2 Game Objects
+struct GameObject { float x, y, z; bool active; float r, g, b; };
+GameObject keyObj = { 20.0f, 0.5f, 20.0f, true, 1.0f, 1.0f, 0.0f }; // Level 1 Key
+GameObject lvl2_key = { 40.0f, 2.0f, 40.0f, true, 1, 1, 0 }; // Level 2 Key
+
+struct Chest { float x, y, z; bool isOpen; };
+Chest lvl2_chest = { 0.0f, 2.0f, 130.0f, false }; // Level 2 Chest
+
+bool hasKey = false; // Level 1 Key
+bool hasLvl2Key = false; // Level 2 Key
+int score = 0;
+int coinsCollected = 10;
+float gameTimer = 0.0f;
+
+// ---------------- TRANSITION STATE ----------------
+static float fadeAlpha = 0.0f;
+static bool isFadingOut = false;
+static bool isFadingIn = false;
+
+// ---------------- CAMERA & PLAYER STATE ----------------
+// Player starts in a fixed position for Level 1 near the NPC
+float playerX = 2.0f;
+float playerZ = 2.0f;
+float playerY = 0.0f;
+float playerYaw = 0.0f;
+
+// Camera
+float camYaw = 0.0f;
+float camPitch = 15.0f;
+float camDistance = 15.0f;
+bool  isFirstPerson = false;
+bool  rotatingCamera = false;
+int   lastMouseX = -1;
+int   lastMouseY = -1;
+
+// Physics
+float velX = 0.0f, velZ = 0.0f;
+float velY = 0.0f;
+const float accel = 18.0f;
+const float maxSpeed = 24.0f;
+const float frictionGround = 105.0f;
+const float frictionAir = 75.0f;
+const float gravity = 15.0f;
+const float jumpImpulse = 7.0f;
+const float maxFallSpeed = -15.0f;
+
+// Input Flags
+bool keyW = false, keyA = false, keyS = false, keyD = false;
+bool spaceTrigger = false;
+bool grounded = true;
+int jumpCount = 0;
+
+// ---------------- MODELS ----------------
+Model_3DS model_pirate;
+Model_3DS model_key;
+Model_3DS model_rocks[5];
+Model_3DS model_houses;
+Model_3DS model_tree;
+Model_3DS model_map;
+Model_3DS model_boat;
+Model_3DS model_palet;
+
+
+// ---------------- HELPER FUNCTIONS & COLLISION (From Level 1/2 Merge) ----------------
+
+static float frand(float minV, float maxV) { return minV + (maxV - minV) * (rand() / (float)RAND_MAX); }
+
+// Helper: is player over a solid platform in Level 2
+static bool IsOnLevel2Platform(float x, float z) {
+    for (const auto& p : lvl2_platforms) {
+        float halfW = p.width / 2.0f;
+        float halfL = p.length / 2.0f;
+        if (x >= (p.x - halfW) && x <= (p.x + halfW) && z >= (p.z - halfL) && z <= (p.z + halfL)) return true;
+    }
+    return false;
+}
+
+// Helper: is player over collidable land (Level 1) or a platform (Level 2)
+static inline bool IsOverLand(float x, float z) {
+    if (gameState == LEVEL_2) return IsOnLevel2Platform(x, z);
+    return x >= 0.0f && x <= LAND_SIZE && z >= 0.0f && z <= LAND_SIZE;
+}
+
+// Helper: check overlap with placed rocks/trees/houses (Level 1)
+static inline bool CollidesWithTree(float x, float z, float radius) {
+    if (gameState != LEVEL_1) return false;
+    const float minDist2 = pow(radius + 1.5f, 2);
+    for (const auto& t : g_trees) if ((pow(x - t.x, 2) + pow(z - t.z, 2)) < minDist2) return true;
+    return false;
+}
+static inline bool CollidesWithRock(float x, float z, float radius) {
+    if (gameState != LEVEL_1) return false;
+    const float minDist2 = pow(radius + 2.0f, 2);
+    for (const auto& r : g_rocks) if ((pow(x - r.x, 2) + pow(z - r.z, 2)) < minDist2) return true;
+    return false;
+}
+static inline bool CollidesWithHouse(float x, float z, float radius) {
+    if (gameState != LEVEL_1) return false;
+    const float minDist2 = pow(radius + 3.5f, 2);
+    for (const auto& h : g_houses) if ((pow(x - h.x, 2) + pow(z - h.z, 2)) < minDist2) return true;
+    return false;
+}
+static inline bool CollidesWithBoat(float x, float z, float radius) {
+    if (gameState != LEVEL_1 || !g_boat.placed) return false;
+    return ((pow(x - g_boat.x, 2) + pow(z - g_boat.z, 2)) < pow(radius + 4.0f, 2));
+}
+static inline bool CollidesWithNPC(float x, float z, float radius) {
+    if (gameState != LEVEL_1 || !g_npc.placed) return false;
+    return ((pow(x - g_npc.x, 2) + pow(z - g_npc.z, 2)) < pow(radius + 1.0f, 2));
+}
+
+static inline bool CollidesWithAnyObject(float x, float z, float radius) {
+    return CollidesWithTree(x, z, radius) || CollidesWithRock(x, z, radius) || CollidesWithHouse(x, z, radius);
+}
+static inline bool CollidesWithNPCSilent(float x, float z, float radius) {
+    return CollidesWithNPC(x, z, radius);
+}
+static inline bool CollidesWithBoatSilent(float x, float z, float radius) {
+    return CollidesWithBoat(x, z, radius);
+}
+
+// Helper: Level 2 Pendulum Collision
+static bool CollidesWithPendulum(float x, float z, float y, float radius) {
+    if (gameState != LEVEL_2) return false;
+    for (const auto& p : lvl2_pendulums) {
+        float rad = p.currentAngle * PI / 180.0f;
+        float spikeX = p.pivotX;
+        float spikeY = p.pivotY - p.length * cos(rad);
+        float spikeZ = p.pivotZ;
+        if (p.axisZ) spikeZ += p.length * sin(rad);
+        else spikeX += p.length * sin(rad);
+        // Check against player center (x, y+1.0f, z) and pendulum spike (endX, endY, endZ)
+        float dist = sqrt(pow(x - spikeX, 2) + pow(y + 1.0f - spikeY, 2) + pow(z - spikeZ, 2));
+        if (dist < (1.5f + radius)) return true; // 1.5f is spike ball radius
+    }
+    return false;
+}
+
+// ---------------- LEVEL 1 PLACEMENT FUNCTIONS ----------------
+
+static void PlaceBoatAtEdge() {
+    g_boat.x = LAND_SIZE / 2.0f;
+    g_boat.z = LAND_SIZE - 5.0f;
+    g_boat.y = GROUND_Y + 0.5f;
+    g_boat.yawDeg = 180.0f;
+    g_boat.scale = 1.0f;
+    g_boat.placed = true;
+}
+
+static inline bool InStreetZone(float x, float z) {
+    const float centerX = WORLD_SIZE * 0.5f;
+    const float centerZ = WORLD_SIZE * 0.5f;
+    const float halfX = (16.0f * 0.5f) + 12.0f + 6.0f;
+    const float halfZ = (6.0f * 2.0f) + 3.0f;
+    return (x >= (centerX - halfX) && x <= (centerX + halfX) && z >= (centerZ - halfZ) && z <= (centerZ + halfZ));
+}
+
+static void PlacePirateMapInRoad() {
+    const float centerX = (WORLD_SIZE * 0.5f) - 12.0f;
+    const float centerZ = (WORLD_SIZE * 0.5f) + 12.0f;
+    g_mapRoad.x = centerX; g_mapRoad.z = centerZ; g_mapRoad.y = 20.8f;
+    g_mapRoad.scale = 0.1f; g_mapRoad.spinDeg = 0.0f; g_mapRoad.placed = true;
+}
+
+void PlaceTreesRandom(int count) {
+    // Using the detailed, fixed tree placement from Level 1 Code
+    g_trees.clear();
+    std::vector<TreeInstance> fixedTrees = {
+        {20.0f, 0.0f, 20.0f, 45.0f, 0.40f}, {280.0f, 0.0f, 20.0f, 90.0f, 0.40f},
+        {20.0f, 0.0f, 280.0f, 135.0f, 0.40f}, {280.0f, 0.0f, 280.0f, 180.0f, 0.40f},
+        {35.0f, 0.0f, 45.0f, 225.0f, 0.40f}, {65.0f, 0.0f, 30.0f, 270.0f, 0.40f},
+        {50.0f, 0.0f, 75.0f, 315.0f, 0.40f}, {235.0f, 0.0f, 45.0f, 0.0f, 0.40f},
+        {265.0f, 0.0f, 30.0f, 45.0f, 0.40f}, {250.0f, 0.0f, 75.0f, 90.0f, 0.40f},
+        {35.0f, 0.0f, 255.0f, 135.0f, 0.40f}, {65.0f, 0.0f, 270.0f, 180.0f, 0.40f},
+        {50.0f, 0.0f, 225.0f, 225.0f, 0.40f}, {235.0f, 0.0f, 255.0f, 270.0f, 0.40f},
+        {265.0f, 0.0f, 270.0f, 315.0f, 0.40f}, {250.0f, 0.0f, 225.0f, 0.0f, 0.40f},
+        {30.0f, 0.0f, 100.0f, 45.0f, 0.40f}, {40.0f, 0.0f, 150.0f, 90.0f, 0.40f},
+        {30.0f, 0.0f, 200.0f, 135.0f, 0.40f}, {270.0f, 0.0f, 100.0f, 180.0f, 0.40f},
+        {260.0f, 0.0f, 150.0f, 225.0f, 0.40f}, {270.0f, 0.0f, 200.0f, 270.0f, 0.40f},
+        {80.0f, 0.0f, 25.0f, 315.0f, 0.40f}, {120.0f, 0.0f, 35.0f, 0.0f, 0.40f},
+        {160.0f, 0.0f, 30.0f, 45.0f, 0.40f}, {200.0f, 0.0f, 25.0f, 90.0f, 0.40f},
+        {220.0f, 0.0f, 40.0f, 135.0f, 0.40f}, {80.0f, 0.0f, 275.0f, 180.0f, 0.40f},
+        {120.0f, 0.0f, 285.0f, 225.0f, 0.40f}, {160.0f, 0.0f, 280.0f, 270.0f, 0.40f},
+        {200.0f, 0.0f, 275.0f, 315.0f, 0.40f}, {220.0f, 0.0f, 290.0f, 0.0f, 0.40f},
+        {90.0f, 0.0f, 90.0f, 45.0f, 0.40f}, {210.0f, 0.0f, 90.0f, 90.0f, 0.40f},
+        {90.0f, 0.0f, 210.0f, 135.0f, 0.40f}, {210.0f, 0.0f, 210.0f, 180.0f, 0.40f},
+        {75.0f, 0.0f, 130.0f, 225.0f, 0.40f}, {225.0f, 0.0f, 130.0f, 270.0f, 0.40f},
+        {75.0f, 0.0f, 170.0f, 315.0f, 0.40f}, {225.0f, 0.0f, 170.0f, 0.0f, 0.40f},
+        {110.0f, 0.0f, 60.0f, 45.0f, 0.40f}, {190.0f, 0.0f, 60.0f, 90.0f, 0.40f},
+        {110.0f, 0.0f, 240.0f, 135.0f, 0.40f}, {190.0f, 0.0f, 240.0f, 180.0f, 0.40f},
+        {140.0f, 0.0f, 100.0f, 225.0f, 0.40f}, {160.0f, 0.0f, 200.0f, 270.0f, 0.40f},
+        {55.0f, 0.0f, 110.0f, 315.0f, 0.40f}, {245.0f, 0.0f, 110.0f, 0.0f, 0.40f},
+        {55.0f, 0.0f, 190.0f, 45.0f, 0.40f}, {245.0f, 0.0f, 190.0f, 90.0f, 0.40f}
+    };
+    for (size_t i = 0; i < fixedTrees.size() && i < (size_t)count; ++i) { g_trees.push_back(fixedTrees[i]); }
+}
+
+void PlaceCoinsRandom(int count) {
+    g_coins.clear();
+    const float minDistFromObjects = 2.0f;
+    const float minDistBetweenCoins = 3.0f;
+    for (int i = 0; i < count; ++i) {
+        const int maxTries = 200;
+        float x = 0.0f, z = 0.0f;
+        bool found = false;
+        for (int t = 0; t < maxTries; ++t) {
+            x = frand(2.0f, LAND_SIZE - 2.0f); z = frand(2.0f, LAND_SIZE - 2.0f);
+            if (!IsOverLand(x, z)) continue;
+            if (CollidesWithRock(x, z, minDistFromObjects) || CollidesWithTree(x, z, minDistFromObjects) || CollidesWithHouse(x, z, minDistFromObjects)) continue;
+            auto OverlapsAnyCoin = [&](float cx, float cz, float minD) {
+                for (const auto& c : g_coins) { float dx = cx - c.x, dz = cz - c.z; if ((dx * dx + dz * dz) < (minD * minD)) return true; } return false;
+                };
+            if (OverlapsAnyCoin(x, z, minDistBetweenCoins)) continue;
+            float dx = x - playerX, dz = z - playerZ; if ((dx * dx + dz * dz) < (minDistFromObjects * minDistFromObjects)) continue;
+            dx = x - keyObj.x, dz = z - keyObj.z; if ((dx * dx + dz * dz) < (minDistFromObjects * minDistFromObjects)) continue;
+            found = true; break;
+        }
+        if (!found) { if (x < 2.0f) x = 2.0f; else if (x > (LAND_SIZE - 2.0f)) x = LAND_SIZE - 2.0f; if (z < 2.0f) z = 2.0f; else if (z > (LAND_SIZE - 2.0f)) z = LAND_SIZE - 2.0f; }
+        g_coins.push_back(CoinInstance{ x, 1.0f, z, 0.0f, 0.01f, true });
+    }
+}
+
+static void PlaceHousesStreet() {
+    g_houses.clear();
+    const float centerX = WORLD_SIZE * 0.5f; const float centerZ = WORLD_SIZE * 0.5f;
+    const float roadWidth = 16.0f; const float houseOffsetX = 12.0f; const float houseSpacingZ = 6.0f;
+    const float rowLeftX = centerX - (roadWidth * 0.5f) - houseOffsetX;
+    const float rowRightX = centerX + (roadWidth * 0.5f) + houseOffsetX;
+    const float startZ = centerZ - (houseSpacingZ * 2.0f);
+    const float y = 0.2f;
+    auto yawForIndex = [](int i) -> float { return 0.0f; };
+    for (int i = 0; i < 5; ++i) {
+        float z = startZ + i * houseSpacingZ; float yaw = yawForIndex(i);
+        g_houses.push_back(HouseInstance{ rowLeftX, y, z, yaw, 0.01f });
+        g_houses.push_back(HouseInstance{ rowRightX, y, z, yaw, 0.01f });
+    }
+}
+
+void PlaceRocksRandom(int countPerModel) {
+    // Using the detailed, fixed rock placement from Level 1 Code
+    g_rocks.clear();
+    std::vector<RockInstance> fixedRocks = {
+        {25.0f, 0.0f, 35.0f, 30.0f, 0.01f, 0}, {275.0f, 0.0f, 35.0f, 60.0f, 0.01f, 1},
+        {25.0f, 0.0f, 265.0f, 90.0f, 0.01f, 2}, {275.0f, 0.0f, 265.0f, 120.0f, 0.01f, 3},
+        {70.0f, 0.0f, 25.0f, 150.0f, 0.01f, 4}, {150.0f, 0.0f, 30.0f, 180.0f, 0.01f, 0},
+        {230.0f, 0.0f, 25.0f, 210.0f, 0.01f, 1}, {70.0f, 0.0f, 275.0f, 240.0f, 0.01f, 2},
+        {150.0f, 0.0f, 280.0f, 270.0f, 0.01f, 3}, {230.0f, 0.0f, 275.0f, 300.0f, 0.01f, 4},
+        {25.0f, 0.0f, 100.0f, 330.0f, 0.01f, 0}, {30.0f, 0.0f, 180.0f, 0.0f, 0.01f, 1},
+        {275.0f, 0.0f, 100.0f, 30.0f, 0.01f, 2}, {280.0f, 0.0f, 180.0f, 60.0f, 0.01f, 3},
+        {85.0f, 0.0f, 80.0f, 90.0f, 0.01f, 4}, {215.0f, 0.0f, 80.0f, 120.0f, 0.01f, 0},
+        {85.0f, 0.0f, 220.0f, 150.0f, 0.01f, 1}, {215.0f, 0.0f, 220.0f, 180.0f, 0.01f, 2},
+        {100.0f, 0.0f, 120.0f, 210.0f, 0.01f, 3}, {200.0f, 0.0f, 120.0f, 240.0f, 0.01f, 4},
+        {100.0f, 0.0f, 180.0f, 270.0f, 0.01f, 0}, {200.0f, 0.0f, 180.0f, 300.0f, 0.01f, 1},
+        {50.0f, 0.0f, 140.0f, 330.0f, 0.01f, 2}, {250.0f, 0.0f, 140.0f, 0.0f, 0.01f, 3},
+        {50.0f, 0.0f, 160.0f, 30.0f, 0.01f, 4}, {250.0f, 0.0f, 160.0f, 60.0f, 0.01f, 0},
+        {120.0f, 0.0f, 55.0f, 90.0f, 0.01f, 1}, {180.0f, 0.0f, 55.0f, 120.0f, 0.01f, 2},
+        {120.0f, 0.0f, 245.0f, 150.0f, 0.01f, 3}, {180.0f, 0.0f, 245.0f, 180.0f, 0.01f, 4}
+    };
+    for (const auto& rock : fixedRocks) { g_rocks.push_back(rock); }
+}
+
+// ---------------- LEVEL 2 PLACEMENT FUNCTION ----------------
+
+void InitLevel2() {
+    lvl2_platforms.clear();
+    lvl2_pendulums.clear();
+
+    // 1. STARTING PLATFORM (Center at 0, 0)
+    lvl2_platforms.push_back({ 0.0f, 0.0f, 15.0f, 15.0f, 0.0f });
+
+    // 2. THE SPIKE CORRIDOR (Straight path with swings)
+    lvl2_platforms.push_back({ 0.0f, 40.0f, 8.0f, 60.0f, 0.0f });
+
+    // Pendulums (axisZ=false means swing on X axis, pivot.x + length*sin(angle))
+    lvl2_pendulums.push_back({ 0.0f, 15.0f, 20.0f, 12.0f, 0.0f, 60.0f, 3.0f, false });
+    lvl2_pendulums.push_back({ 0.0f, 15.0f, 40.0f, 12.0f, 0.0f, 60.0f, 4.0f, false });
+    lvl2_pendulums.push_back({ 0.0f, 15.0f, 60.0f, 12.0f, 0.0f, 60.0f, 2.5f, false });
+
+    // 3. THE SPLIT (Safe platform)
+    lvl2_platforms.push_back({ 0.0f, 80.0f, 20.0f, 15.0f, 0.0f });
+
+    // 4. THE KEY PATH (Side Platform)
+    lvl2_platforms.push_back({ 25.0f, 80.0f, 25.0f, 8.0f, 0.0f }); // Bridge to right
+    lvl2_platforms.push_back({ 40.0f, 80.0f, 15.0f, 15.0f, 0.0f }); // Key Platform
+    lvl2_key.x = 40.0f; lvl2_key.y = 2.0f; lvl2_key.z = 80.0f; // Set key pos
+
+    // 5. THE FINAL GAUNTLET (To Chest)
+    lvl2_platforms.push_back({ 0.0f, 110.0f, 8.0f, 40.0f, 0.0f });
+
+    // More Pendulums (Faster)
+    lvl2_pendulums.push_back({ 0.0f, 15.0f, 100.0f, 12.0f, 0.0f, 70.0f, 5.0f, false });
+    lvl2_pendulums.push_back({ 0.0f, 15.0f, 120.0f, 12.0f, 0.0f, 70.0f, 5.0f, false });
+
+    // 6. CHEST PLATFORM
+    lvl2_platforms.push_back({ 0.0f, 135.0f, 20.0f, 10.0f, 1.0f });
+    lvl2_chest.x = 0.0f; lvl2_chest.y = 2.0f; lvl2_chest.z = 135.0f;
+}
+
+// ---------------- RENDERING PRIMITIVES ----------------
+
+// Custom coin rendering function
+void DrawCustomCoin() {
+    glDisable(GL_TEXTURE_2D); glEnable(GL_LIGHTING);
+    GLfloat coinAmbient[] = { 0.9f, 0.9f, 0.0f, 1.0f };
+    GLfloat coinDiffuse[] = { 1.0f, 1.0f, 0.0f, 1.0f };
+    GLfloat coinSpecular[] = { 1.0f, 1.0f, 0.5f, 1.0f };
+    GLfloat coinShininess[] = { 50.0f };
+    glMaterialfv(GL_FRONT_AND_BACK, GL_AMBIENT, coinAmbient);
+    glMaterialfv(GL_FRONT_AND_BACK, GL_DIFFUSE, coinDiffuse);
+    glMaterialfv(GL_FRONT_AND_BACK, GL_SPECULAR, coinSpecular);
+    glMaterialfv(GL_FRONT_AND_BACK, GL_SHININESS, coinShininess);
+    const float radius = 0.5f; const float thickness = 0.15f; const int slices = 20;
+    GLUquadricObj* quadric = gluNewQuadric();
+    gluQuadricDrawStyle(quadric, GLU_FILL); gluQuadricNormals(quadric, GLU_SMOOTH);
+    gluCylinder(quadric, radius, radius, thickness, slices, 1);
+    glPushMatrix(); glTranslatef(0, 0, thickness); gluDisk(quadric, 0, radius, slices, 1); glPopMatrix();
+    glPushMatrix(); glRotatef(180, 1, 0, 0); gluDisk(quadric, 0, radius, slices, 1); glPopMatrix();
+    gluDeleteQuadric(quadric);
+    glEnable(GL_TEXTURE_2D);
+}
+
+void RenderText(float x, float y, const char* string) {
+    glDisable(GL_LIGHTING); glDisable(GL_TEXTURE_2D);
+    glMatrixMode(GL_PROJECTION); glPushMatrix(); glLoadIdentity();
+    int w = glutGet(GLUT_WINDOW_WIDTH); int h = glutGet(GLUT_WINDOW_HEIGHT);
+    gluOrtho2D(0, w, 0, h);
+    glMatrixMode(GL_MODELVIEW); glPushMatrix(); glLoadIdentity();
+    glColor3f(1.0f, 1.0f, 1.0f); glRasterPos2f(x, y);
+    for (const char* c = string; *c != '\0'; c++) { glutBitmapCharacter(GLUT_BITMAP_HELVETICA_18, *c); }
+    glPopMatrix(); glMatrixMode(GL_PROJECTION); glPopMatrix(); glMatrixMode(GL_MODELVIEW);
+    glEnable(GL_TEXTURE_2D); glEnable(GL_LIGHTING);
+}
+
+// ---------------- SCENE INITIALIZATION & ASSET LOADING ----------------
+
+void myInit(void) {
+    glClearColor(0.5f, 0.8f, 0.9f, 0.0f);
+    glMatrixMode(GL_PROJECTION); glLoadIdentity();
+    gluPerspective(45.0, (GLdouble)WIDTH / (GLdouble)HEIGHT, 0.1, 300);
+    glMatrixMode(GL_MODELVIEW); glLoadIdentity();
+    glEnable(GL_LIGHTING); glEnable(GL_LIGHT0); glEnable(GL_LIGHT1);
+    GLfloat a[] = { 0.5f, 0.5f, 0.5f, 1.0f }; glLightfv(GL_LIGHT0, GL_AMBIENT, a);
+    GLfloat d[] = { 0.8f, 0.8f, 0.8f, 1.0f }; glLightfv(GL_LIGHT0, GL_DIFFUSE, d);
+    glEnable(GL_DEPTH_TEST); glEnable(GL_NORMALIZE); glEnable(GL_COLOR_MATERIAL); glShadeModel(GL_SMOOTH);
+    setvbuf(stdout, NULL, _IONBF, 0);
+}
+
+void LoadAssets() {
+    model_pirate.Load("models/pirate/Pirate.3ds");
+    model_key.Load("models/key/GoldenKey.3ds");
+    model_map.Load("models/map/map1.3ds");
+    model_rocks[0].Load("models/rocks/Rock0.3ds"); model_rocks[1].Load("models/rocks/Rock1.3ds");
+    model_rocks[2].Load("models/rocks/Rock2.3ds"); model_rocks[3].Load("models/rocks/Rock3.3ds");
+    model_rocks[4].Load("models/rocks/Rock4.3ds");
+    model_boat.Load("models/Boat/pirateships.3ds");
+    model_palet.Load("models/palet/palet.3ds");
+    model_houses.Load("models/medieval-structures-wip/MedievalHouses.3ds");
+    model_tree.Load("models/tree/Tree1.3ds");
+
+    skyboxTexture.Load("textures/blu-sky-3.bmp");
+    groundTexture.Load("textures/Dirt1.bmp");
+    tex_menu_bg.Load("textures/menu_bg.bmp");
+    tex_play_btn.Load("textures/play_btn.bmp"); // Assuming you have a 'play_btn.bmp' in your textures folder
+
+    srand((unsigned)time(nullptr));
+    PlaceRocksRandom(6);
+    PlaceHousesStreet();
+    PlaceTreesRandom(50);
+    PlaceCoinsRandom(20);
+    PlacePirateMapInRoad();
+    PlaceBoatAtEdge();
+    InitLevel2(); // Initialize Level 2 for later use
+}
+
+// ---------------- LOGIC UPDATES ----------------
+
+// Reset player state for Level 2 transition/death
+void ResetPlayerLvl2() {
+    playerX = 0.0f;
+    playerZ = 0.0f;
+    playerY = 0.0f;
+    velX = 0; velZ = 0; velY = 0;
+    jumpCount = 0; grounded = true;
+}
+
+void UpdateMovement(float dt) {
+    if (isFadingOut) return;
+
+    float desiredX = 0.0f, desiredZ = 0.0f;
+    const float yawRad = playerYaw * PI / 180.0f;
+    const float fx = sinf(yawRad); const float fz = cosf(yawRad);
+    const float lx = -fz; const float lz = fx;
+
+    if (keyW) { desiredX -= fx; desiredZ -= fz; }
+    if (keyS) { desiredX += fx; desiredZ += fz; }
+    if (keyA) { desiredX += lx; desiredZ += lz; }
+    if (keyD) { desiredX -= lx; desiredZ -= lz; }
+
+    float len = sqrt(desiredX * desiredX + desiredZ * desiredZ);
+    if (len > 0.0001f) {
+        desiredX /= len; desiredZ /= len;
+        velX += desiredX * accel * dt; velZ += desiredZ * accel * dt;
+    }
+    else {
+        float vlen = sqrt(velX * velX + velZ * velZ);
+        if (vlen > 0.0001f) {
+            float baseFriction = grounded ? frictionGround : frictionAir;
+            float dec = baseFriction * dt;
+            float dragFactor = grounded ? 0.5f : 1.0f;
+            dec += vlen * dragFactor * dt;
+
+            float newLen = vlen - dec; if (newLen < 0.0f) newLen = 0.0f;
+            float scale = (vlen > 0.0f) ? (newLen / vlen) : 0.0f;
+            velX *= scale; velZ *= scale;
+        }
+        else { velX = 0.0f; velZ = 0.0f; }
+    }
+
+    float vlen = sqrt(velX * velX + velZ * velZ);
+    if (vlen > maxSpeed) { float scale = maxSpeed / vlen; velX *= scale; velZ *= scale; }
+
+    // Collision checks
+    bool hitObstacle = false;
+
+    // Check X axis
+    float testX = playerX + velX * dt;
+    bool hitNPC_X = CollidesWithNPCSilent(testX, playerZ, 0.0f) || CollidesWithBoatSilent(testX, playerZ, 0.0f);
+    // Prevent leaving ground bounds in Level 1
+    if (gameState == LEVEL_1 && !IsOverLand(testX, playerZ)) {
+        velX = 0; hitObstacle = true;
+    }
+    else if (CollidesWithAnyObject(testX, playerZ, 0.0f) || hitNPC_X) {
+        velX = 0; if (!hitNPC_X) hitObstacle = true;
+    }
+    else { playerX = testX; }
+
+    // Check Z axis
+    float testZ = playerZ + velZ * dt;
+    bool hitNPC_Z = CollidesWithNPCSilent(playerX, testZ, 0.0f) || CollidesWithBoatSilent(playerX, testZ, 0.0f);
+    // Prevent leaving ground bounds in Level 1
+    if (gameState == LEVEL_1 && !IsOverLand(playerX, testZ)) {
+        velZ = 0; hitObstacle = true;
+    }
+    else if (CollidesWithAnyObject(playerX, testZ, 0.0f) || hitNPC_Z) {
+        velZ = 0; if (!hitNPC_Z) hitObstacle = true;
+    }
+    else { playerZ = testZ; }
+
+    if (hitObstacle) {
+        int currentTime = glutGet(GLUT_ELAPSED_TIME);
+        if (currentTime - lastCollisionTime > COLLISION_SOUND_COOLDOWN) { MciPlayOnce(ALIAS_COLLISION); lastCollisionTime = currentTime; }
+    }
+
+    // Vertical movement (Gravity & Jump)
+    velY -= gravity * dt; if (velY < maxFallSpeed) velY = maxFallSpeed;
+
+    if (spaceTrigger && jumpCount < 2) {
+        velY = jumpImpulse; grounded = false; jumpCount++; spaceTrigger = false; MciPlayOnce(ALIAS_JUMP);
+    }
+
+    playerY += velY * dt;
+
+    // Ground/Water/Platform Landing
+    if (playerY < GROUND_Y) {
+        if (IsOverLand(playerX, playerZ)) {
+            playerY = GROUND_Y; velY = 0.0f; grounded = true; jumpCount = 0;
+        }
+        else {
+            grounded = false; velY = (velY > -5.0f) ? velY : -5.0f;
+            // Level 2 Death from falling in Abyss
+            if (gameState == LEVEL_2 && playerY < -20.0f) { ResetPlayerLvl2(); MciPlayOnce(ALIAS_COLLISION); }
+        }
+    }
+
+    // Level 1 Platforms Landing
+    if (gameState == LEVEL_1) {
+        for (int i = 0; i < PLATFORM_COUNT; ++i) {
+            const Platform& p = g_platforms[i]; const float s = p.size; const float topY = p.y;
+            if (playerX >= (p.x - s) && playerX <= (p.x + s) && playerZ >= (p.z - s) && playerZ <= (p.z + s)) {
+                if (playerY >= topY - 0.5f && playerY <= topY + 1.0f && velY <= 0.0f) {
+                    playerY = topY; velY = 0.0f; grounded = true; jumpCount = 0;
+                }
+            }
+        }
+    }
+
+    // Level 2 Collision (Death Hazard)
+    if (gameState == LEVEL_2 && CollidesWithPendulum(playerX, playerZ, playerY, 0.0f)) {
+        ResetPlayerLvl2();
+        MciPlayOnce(ALIAS_COLLISION);
+    }
+
+    // Clamp to ground bounds strictly in Level 1
+    if (gameState == LEVEL_1) {
+        if (playerX < 0.0f) playerX = 0.0f; if (playerX > LAND_SIZE) playerX = LAND_SIZE;
+        if (playerZ < 0.0f) playerZ = 0.0f; if (playerZ > LAND_SIZE) playerZ = LAND_SIZE;
+    }
+}
+
+void CheckGameLogic() {
+    float pickupDist = 2.0f;
+
+    if (gameState == LEVEL_1) {
+        // Coin/Key/Map Pickups (Level 1)
+        for (auto& coin : g_coins) {
+            if (coin.active) {
+                float d = sqrt(pow(playerX - coin.x, 2) + pow(playerZ - coin.z, 2));
+                if (d < pickupDist) { coin.active = false; score += 1; coinsCollected++; MciPlayOnce(ALIAS_COIN_PICKUP); }
+            }
+        }
+        if (keyObj.active) {
+            float d = sqrt(pow(playerX - keyObj.x, 2) + pow(playerZ - keyObj.z, 2));
+            if (d < pickupDist) { keyObj.active = false; hasKey = true; score += 50; }
+        }
+        if (g_mapRoad.placed) {
+            float d = sqrt(pow(playerX - g_mapRoad.x, 2) + pow(playerZ - g_mapRoad.z, 2));
+            if (d < pickupDist) { g_mapRoad.placed = false; hasMap = true; score += 10; MciPlayOnce(ALIAS_MAP_PICKUP); }
+        }
+
+        // NPC Interaction Check
+        showInteractPrompt = (g_npc.placed && sqrt(pow(playerX - g_npc.x, 2) + pow(playerZ - g_npc.z, 2)) < NPC_INTERACT_DISTANCE);
+
+        // Boat Interaction Check
+        showBoatPrompt = (g_boat.placed && sqrt(pow(playerX - g_boat.x, 2) + pow(playerZ - g_boat.z, 2)) < BOAT_INTERACT_DISTANCE);
+
+        // Win condition (Level 1)
+        int coinsRemaining = 0;
+        for (const auto& coin : g_coins) { if (coin.active) coinsRemaining++; }
+        if (coinsRemaining == 0 && hasKey) {
+            // This condition is now replaced by the boat transition for progression.
+            // Only WIN if they manage to pay the boat and reach level 2 and win there
+        }
+    }
+    else if (gameState == LEVEL_2) {
+        // Pick up Key (Level 2)
+        if (lvl2_key.active) {
+            float d = sqrt(pow(playerX - lvl2_key.x, 2) + pow(playerZ - lvl2_key.z, 2));
+            if (d < 3.0f) { lvl2_key.active = false; hasLvl2Key = true; MciPlayOnce(ALIAS_COIN_PICKUP); }
+        }
+
+        // Open Chest (Level 2 WIN)
+        float d = sqrt(pow(playerX - lvl2_chest.x, 2) + pow(playerZ - lvl2_chest.z, 2));
+        if (d < 3.0f && hasLvl2Key) {
+            gameState = WIN;
+            MciStop(ALIAS_BGM);
+            if (!gameOverSoundPlayed) { MciPlayOnce(ALIAS_GAMEOVER); gameOverSoundPlayed = true; }
+        }
+    }
+}
+
+// ---------------- RENDERING SCENES ----------------
+
+// Level 1: Draw Platforms (Palets)
+static void RenderPaletsOnPlatforms() {
+    glEnable(GL_TEXTURE_2D); glEnable(GL_LIGHTING); glColor3f(0.6f, 0.5f, 0.4f);
+    for (int i = 0; i < PLATFORM_COUNT; ++i) {
+        const Platform& p = g_platforms[i];
+        glPushMatrix();
+        glTranslatef(p.x, p.y - 0.8f, p.z + 2.6f);
+        glRotatef(90.0f, 1, 0, 0);
+        float s = p.size * 0.2f; glScalef(s, s, s);
+        model_palet.Draw();
+        glPopMatrix();
+    }
+}
+
+void RenderGround() {
+    glEnable(GL_TEXTURE_2D); glDisable(GL_LIGHTING); glColor3f(1.0f, 1.0f, 1.0f);
+    groundTexture.Use();
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+
+    const float tilingFactor = LAND_SIZE / 20.0f;
+    glBegin(GL_QUADS);
+    glTexCoord2f(0.0f, 0.0f); glVertex3f(0.0f, GROUND_Y, 0.0f);
+    glTexCoord2f(tilingFactor, 0.0f); glVertex3f(LAND_SIZE, GROUND_Y, 0.0f);
+    glTexCoord2f(tilingFactor, tilingFactor); glVertex3f(LAND_SIZE, GROUND_Y, LAND_SIZE);
+    glTexCoord2f(0.0f, tilingFactor); glVertex3f(0.0f, GROUND_Y, LAND_SIZE);
+    glEnd();
+
+    // Water: keep solid blue, untextured
+    glDisable(GL_TEXTURE_2D); glColor3f(0.2f, 0.4f, 1.0f);
+    glBegin(GL_QUADS); glVertex3f(-100, WATER_Y, -100); glVertex3f(WORLD_SIZE + 100, WATER_Y, -100);
+    glVertex3f(WORLD_SIZE + 100, WATER_Y, WORLD_SIZE + 100); glVertex3f(-100, WATER_Y, WORLD_SIZE + 100); glEnd();
+    glEnable(GL_LIGHTING);
+}
+
+void RenderLevel2() {
+    // Draw Platforms
+    glEnable(GL_TEXTURE_2D); groundTexture.Use(); glColor3f(0.8f, 0.8f, 0.8f);
+    for (const auto& p : lvl2_platforms) {
+        float hw = p.width / 2.0f; float hl = p.length / 2.0f; float y = p.y;
+        glBegin(GL_QUADS);
+        glTexCoord2f(0, 0); glVertex3f(p.x - hw, y, p.z - hl); glTexCoord2f(1, 0); glVertex3f(p.x + hw, y, p.z - hl);
+        glTexCoord2f(1, 1); glVertex3f(p.x + hw, y, p.z + hl); glTexCoord2f(0, 1); glVertex3f(p.x - hw, y, p.z + hl);
+        glVertex3f(p.x - hw, y - 2.0f, p.z - hl); glVertex3f(p.x + hw, y - 2.0f, p.z - hl);
+        glVertex3f(p.x + hw, y - 2.0f, p.z + hl); glVertex3f(p.x - hw, y - 2.0f, p.z + hl);
+        glEnd();
+
+        glDisable(GL_TEXTURE_2D); glColor3f(0.4f, 0.4f, 0.4f);
+        glBegin(GL_QUADS);
+        glVertex3f(p.x - hw, y, p.z + hl); glVertex3f(p.x + hw, y, p.z + hl); glVertex3f(p.x + hw, y - 2, p.z + hl); glVertex3f(p.x - hw, y - 2, p.z + hl);
+        glVertex3f(p.x - hw, y, p.z - hl); glVertex3f(p.x + hw, y, p.z - hl); glVertex3f(p.x + hw, y - 2, p.z - hl); glVertex3f(p.x - hw, y - 2, p.z - hl);
+        glVertex3f(p.x - hw, y, p.z - hl); glVertex3f(p.x - hw, y, p.z + hl); glVertex3f(p.x - hw, y - 2, p.z + hl); glVertex3f(p.x - hw, y - 2, p.z - hl);
+        glVertex3f(p.x + hw, y, p.z - hl); glVertex3f(p.x + hw, y, p.z + hl); glVertex3f(p.x + hw, y - 2, p.z + hl); glVertex3f(p.x + hw, y - 2, p.z - hl);
+        glEnd();
+        glEnable(GL_TEXTURE_2D); glColor3f(0.8f, 0.8f, 0.8f);
+    }
+
+    // Draw Pendulum
